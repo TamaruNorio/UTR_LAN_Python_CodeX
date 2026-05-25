@@ -78,7 +78,7 @@ PR作業の開始、公開準備、merge後の同期を補助します。
 .\scripts\sync_after_merge.ps1 -Branch codex/example-task
 ```
 
-`publish_pr.ps1` は確認後に `git commit` と `git push` を実行します。PR作成とmergeは自動実行しません。
+`publish_pr.ps1` は確認後に `git commit` と `git push` を実行し、`pr_body.md` の生成、クリップボード確認、PR作成URLの表示を行います。クリップボード確認に失敗した場合は `pr_body.md` を開きます。PR作成とmergeは自動実行しません。
 
 ## mock TCPサーバーの使い方
 

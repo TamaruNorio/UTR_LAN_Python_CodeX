@@ -61,6 +61,58 @@ function Get-PullRequestUrl {
     return "https://github.com/$ownerRepo/compare/main...$encodedBranch" + "?expand=1&title=$encodedTitle"
 }
 
+function Get-ClipboardText {
+    try {
+        return Get-Clipboard -Raw
+    }
+    catch {
+        return (Get-Clipboard | Out-String).TrimEnd()
+    }
+}
+
+function Open-PrBody {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    try {
+        Start-Process notepad.exe -ArgumentList $Path
+    }
+    catch {
+        Write-Host "Could not open pr_body.md in notepad: $_" -ForegroundColor Yellow
+    }
+}
+
+function Copy-PrBodyToClipboard {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $bodyText = Get-Content -LiteralPath $Path -Raw
+    $verified = $false
+
+    try {
+        if ((Get-Command Set-Clipboard -ErrorAction SilentlyContinue) -and (Get-Command Get-Clipboard -ErrorAction SilentlyContinue)) {
+            $bodyText | Set-Clipboard
+            $clipboardText = Get-ClipboardText
+            if ($clipboardText -eq $bodyText) {
+                $verified = $true
+                Write-Host "Clipboard verified."
+            }
+        }
+    }
+    catch {
+        $verified = $false
+    }
+
+    if (-not $verified) {
+        Write-Host "Clipboard copy could not be verified. Opening pr_body.md." -ForegroundColor Yellow
+        Open-PrBody -Path $Path
+    }
+}
+
 Push-Location $repoRoot
 try {
     $branch = git branch --show-current
@@ -134,21 +186,19 @@ try {
         & $prBodyScript -OutputPath $bodyPath
     }
 
-    try {
-        if (Get-Command Set-Clipboard -ErrorAction SilentlyContinue) {
-            Get-Content -LiteralPath $bodyPath -Raw | Set-Clipboard
-            Write-Host "Copied pr_body.md to clipboard."
-        }
-    }
-    catch {
-        Write-Host "Could not copy pr_body.md to clipboard: $_" -ForegroundColor Yellow
-    }
+    Copy-PrBodyToClipboard -Path $bodyPath
 
     $url = Get-PullRequestUrl -Branch $branch -PrTitle $Title
     Write-Host ""
     if ($url) {
         Write-Host "PR creation URL:"
         Write-Host $url
+        try {
+            Start-Process $url
+        }
+        catch {
+            Write-Host "Could not open PR creation URL in browser: $_" -ForegroundColor Yellow
+        }
     }
     else {
         Write-Host "PR URLを推定できませんでした。GitHub上で手動作成してください" -ForegroundColor Yellow

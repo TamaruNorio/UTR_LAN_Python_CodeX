@@ -26,6 +26,10 @@
 - `logs/real_device/` は実機ログ保存用であり、pytest一時領域には使わない。
 - 不明な通信仕様は推測で実装しない。
 - 通信仕様に関わる変更が必要な場合は、根拠となる資料と確認事項を先に提示する。
+- PowerShellでの確認コマンドは、原則としてCodex側で実行する。
+- ユーザーに `git status`、`git branch --show-current`、`.\scripts\dev_check.ps1`、`.\scripts\git_preflight.ps1` などを毎回コピペさせない。
+- 実行に承認が必要な操作がある場合は、個別に何度も聞かず、作業内容をまとめて1回だけ確認する。
+- 実機通信、`git commit`、`git push`、PR作成、merge は明示許可がない限り実行しない。
 
 ## 変更後の報告項目
 

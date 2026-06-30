@@ -43,12 +43,6 @@ UHF_GET_INVENTORY_PARAM_REQUEST = bytes.fromhex("02 00 55 02 41 00 03 9D 0D")
 UHF_SET_INVENTORY_PARAM_REQUEST = bytes.fromhex(
     "02 00 55 09 30 00 81 00 00 00 00 00 00 03 14 0D"
 )
-
-# 送信出力読み取りの固定応答です。
-# サンプル側は result[7] / result[8] を見て dBm 表示するため、
-# 0x00F0 = 240 -> 24.0 dBm 相当の値を返します。
-UHF_READ_OUTPUT_POWER_RESPONSE = build_frame_placeholder = None
-
 INVENTORY_TAG_RESPONSE = bytes.fromhex(
     "02 00 6C 13 09 FF 12 30 0E 30 00 E2 80 11 00 20 00 39 46 A5 F0 0F 5A 03 1C 0D"
 )
@@ -84,7 +78,9 @@ def build_nack(detail: int, error_code_1: int, address: int = 0x00) -> bytes:
 
 # build_frame() 定義後に固定応答を生成します。
 # ここで返す値は mock 用の安全な固定値であり、実機設定の正値ではありません。
+# 送信出力は 0x00F0 = 240 -> 24.0 dBm 相当の値を返します。
 UHF_READ_OUTPUT_POWER_RESPONSE = build_frame(ACK, bytes([0x43, 0x01, 0x00, 0xF0, 0x00]))
+# 周波数チャンネルは ch21 相当の固定値を返します。
 UHF_READ_FREQ_CH_RESPONSE = build_frame(ACK, bytes([0x43, 0x02, 0x00, 0x15]))
 UHF_GET_INVENTORY_PARAM_RESPONSE = build_frame(
     ACK,

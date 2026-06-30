@@ -8,7 +8,7 @@
 
 ## 概要
 
-このサンプルプログラムは、ROMバージョン確認、コマンドモード切替、送信出力値／周波数チャンネルの取得、インベントリ（タグ読み取り）の実行、RSSIとPC+UIIの抽出・表示、ブザー制御、集計結果の表示／ログ保存、受信フレームのSTX / ETX / SUM / CR 検証といった主要な機能を提供します。
+このサンプルプログラムは、ROMバージョン確認、コマンドモード切替、送信出力値／周波数チャンネルの取得、Inventoryパラメータの読み取り、インベントリ（タグ読み取り）の実行、RSSIとPC+UIIの抽出・表示、ブザー制御、集計結果の表示／ログ保存、受信フレームのSTX / ETX / SUM / CR 検証といった主要な機能を提供します。
 
 ## 安全方針
 
@@ -32,8 +32,8 @@ Inventoryパラメータは、`UHF_GET_INVENTORY_PARAM` で現在値を読み取
 1.  **Python を用意**: Python 3.10 以上がインストールされていることを確認してください。
 2.  **リポジトリのクローン**:
     ```bash
-    git clone https://github.com/TamaruNorio/UTR_LAN_Python.git
-    cd UTR_LAN_Python
+    git clone https://github.com/TamaruNorio/UTR_LAN_Python_CodeX.git
+    cd UTR_LAN_Python_CodeX
     ```
 3.  **実行**:
     ```bash
@@ -90,7 +90,7 @@ PR作業の開始、公開準備、merge後の同期を補助します。
 
 ## mock TCPサーバーの使い方
 
-UTRリーダライタ実機の代わりに、localhost 上で mock TCPサーバーを起動できます。
+UTRリーダライタ実機の代わりに、localhost 上で mock TCPサーバーを起動できます。実機に接続する前に、PC上だけで通常実行フローを確認するための機能です。
 
 one-tag シナリオ:
 
@@ -105,6 +105,32 @@ py tools/mock_utr_tcp_server.py --scenario no-tag
 ```
 
 停止する場合は、起動中の PowerShell で `Ctrl + C` を押します。
+
+## LANサンプル本体をmock TCPサーバーで確認する方法
+
+PowerShellを2つ開きます。
+
+1つ目のPowerShellでmock TCPサーバーを起動します。
+
+```powershell
+py tools/mock_utr_tcp_server.py --scenario no-tag
+```
+
+2つ目のPowerShellでLANサンプル本体を実行します。
+
+```powershell
+py src/UTR_LAN_sample_1.0.0.py
+```
+
+入力例:
+
+```text
+装置の IP アドレス: 127.0.0.1
+TCP ポート番号: 9004
+繰り返す回数: 1
+```
+
+mock TCPサーバー側の `RX:` ログで、`UHF_GET_INVENTORY_PARAM` が送信され、`UHF_SET_INVENTORY_PARAM` が送信されていないことを確認してください。
 
 ## mockクライアントの使い方
 
@@ -211,7 +237,12 @@ UTR_LAN_PYTHON/
 ├─ docs/
 │  └─ disable_auto_set_inventory_param.md
 ├─ tests/
-│  └─ test_disable_auto_set_inventory_param.py
+│  ├─ test_disable_auto_set_inventory_param.py
+│  └─ test_mock_utr_tcp_server_safe_flow.py
+├─ tools/
+│  ├─ mock_utr_tcp_server.py
+│  ├─ mock_client_check.py
+│  └─ real_device_check.py
 ├─ .gitignore
 └─ README.md                     # このファイル
 ```
@@ -248,6 +279,7 @@ UTR_LAN_PYTHON/
 
 ## 変更履歴
 
+-   0.2.2 (2026-06-30): mock TCPサーバーを拡張し、LANサンプル本体の読み取り系通常フローをPC上だけで確認できる手順を追加。
 -   0.2.1 (2026-06-30): 通常実行フローから `UHF_SET_INVENTORY_PARAM` の自動送信を停止。Inventoryパラメータは `UHF_GET_INVENTORY_PARAM` による読み取り・表示のみに変更。
 -   0.2.0 (2026-05-19): 通信プロトコル資料、機器取扱説明書、UTRRWManager確認手順、mock TCPサーバー、mockクライアント、実機LAN確認ツール、pytestによる検証基盤を追加。UTRRWManagerの送受信ログを基準ログとして、PythonサンプルのTX/RXと比較できる構成に整理。
 -   0.1.0 (2024-06-06): 初版。LAN受信のフレーム復元とInventory2最小動作を実装。

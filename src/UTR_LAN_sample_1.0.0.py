@@ -26,6 +26,7 @@ Python 3.10+ / Windows 10+ で動作確認想定
 - 既定のポート例: 9004（装置・設定により異なる場合があります）
 """
 
+import argparse
 import sys
 import time
 import datetime
@@ -33,6 +34,12 @@ import re
 import socket
 from pathlib import Path
 from typing import List, Optional, Tuple
+
+# ==== CLI 既定値 ==============================================================
+DEFAULT_HOST = "10.26.201.92"
+DEFAULT_PORT = 9004
+MIN_REPEAT_COUNT = 1
+MAX_REPEAT_COUNT = 100
 
 # ==== 定数定義（USB版と同じ）====================================================
 HEADER_LENGTH     = 4        # STX, アドレス, コマンド, データ長 (各1バイト)
@@ -349,15 +356,77 @@ def save_results_to_file(filename: str, total_iterations: int, total_read_time: 
             f.write(f"{pc_uii_hex}: {count} 回\n")
         f.write("========= ここまで ============\n\n\n")
 
+
+def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="UTR LAN sample")
+    parser.add_argument("--host", help=f"装置のIPアドレス（既定値: {DEFAULT_HOST}）")
+    parser.add_argument("--port", type=int, help=f"TCPポート番号（既定値: {DEFAULT_PORT}）")
+    parser.add_argument("--repeat", type=int, help=f"Inventory繰り返し回数（{MIN_REPEAT_COUNT}〜{MAX_REPEAT_COUNT}）")
+    args = parser.parse_args(argv)
+
+    if args.repeat is not None and not (MIN_REPEAT_COUNT <= args.repeat <= MAX_REPEAT_COUNT):
+        parser.error(f"--repeat は {MIN_REPEAT_COUNT}〜{MAX_REPEAT_COUNT} の整数で指定してください。")
+    if args.port is not None and args.port <= 0:
+        parser.error("--port は 1 以上の整数で指定してください。")
+    return args
+
+
+def prompt_host(args: argparse.Namespace) -> Tuple[str, str]:
+    if args.host is not None:
+        return args.host, "--host 指定"
+
+    host = input(f"装置の IP アドレスを入力してください（未入力なら {DEFAULT_HOST} を使用）: ").strip()
+    if host:
+        return host, "対話入力"
+    return DEFAULT_HOST, "既定値"
+
+
+def prompt_port(args: argparse.Namespace) -> Tuple[int, str]:
+    if args.port is not None:
+        return args.port, "--port 指定"
+
+    while True:
+        port_text = input(f"TCP ポート番号を入力してください（未入力なら {DEFAULT_PORT} を使用）: ").strip()
+        if not port_text:
+            return DEFAULT_PORT, "既定値"
+        try:
+            port = int(port_text)
+            if port <= 0:
+                raise ValueError("入力は 1 以上の整数である必要があります。")
+            return port, "対話入力"
+        except ValueError as e:
+            print(f"エラー: {e}")
+
+
+def prompt_repeat_count(args: argparse.Namespace) -> Tuple[int, str]:
+    if args.repeat is not None:
+        return args.repeat, "--repeat 指定"
+
+    while True:
+        try:
+            repeat_count = int(input(f"繰り返す回数を入力してください（{MIN_REPEAT_COUNT}〜{MAX_REPEAT_COUNT}）: "))
+            if not (MIN_REPEAT_COUNT <= repeat_count <= MAX_REPEAT_COUNT):
+                raise ValueError(f"入力は {MIN_REPEAT_COUNT} 〜 {MAX_REPEAT_COUNT} の整数である必要があります。")
+            return repeat_count, "対話入力"
+        except ValueError as e:
+            print(f"エラー: {e}")
+
+
+def print_runtime_value(label: str, value, source: str) -> None:
+    print(f"{label}: {value}（{source}）")
+
 # =============================================================================
 #  メイン
 # =============================================================================
-def main():
+def main(argv: Optional[List[str]] = None):
+    args = parse_args(argv)
+
     # --- 接続情報の入力 ---
     print("UTR（LANモデル）に接続します。")
-    host = input("装置の IP アドレスを入力してください（例: 192.168.0.1）: ").strip()
-    port_text = input("TCP ポート番号を入力してください（未入力なら 9004 を使用）: ").strip()
-    port = int(port_text) if port_text else 9004
+    host, host_source = prompt_host(args)
+    port, port_source = prompt_port(args)
+    print_runtime_value("接続先IP", host, host_source)
+    print_runtime_value("TCPポート番号", port, port_source)
 
     # --- ログ準備 ---
     # 実機確認時に「何を送って、何を受けたか」を後から確認できるように保存します。
@@ -450,14 +519,8 @@ def main():
     total_iterations  = 0
     pc_uii_count_dict = {}
 
-    while True:
-        try:
-            repeat_count = int(input("繰り返す回数を入力してください（1〜100）: "))
-            if (repeat_count <= 0) or (repeat_count > 100):
-                raise ValueError("入力は 1 〜 100 の整数である必要があります。")
-            break
-        except ValueError as e:
-            print(f"エラー: {e}")
+    repeat_count, repeat_source = prompt_repeat_count(args)
+    print_runtime_value("繰り返す回数", repeat_count, repeat_source)
 
     for _ in range(repeat_count):
         start_time = time.time()

@@ -26,6 +26,7 @@ CR = 0x0D
 ACK = 0x30
 NACK = 0x31
 RF_TAG_DATA = 0x6C
+BUZZER = 0x42
 
 ERROR_SUM = 0x42
 ERROR_FORMAT = 0x44
@@ -34,13 +35,25 @@ ROM_VERSION_REQUEST = bytes.fromhex("02 00 4F 01 90 03 E5 0D")
 ROM_VERSION_RESPONSE = bytes.fromhex(
     "02 00 30 0A 90 31 31 30 30 55 53 4D 30 31 03 E7 0D"
 )
+COMMAND_MODE_ACK = bytes.fromhex("02 00 30 00 03 35 0D")
 UHF_INVENTORY_REQUEST = bytes.fromhex("02 00 55 01 10 03 6B 0D")
+UHF_READ_OUTPUT_POWER_REQUEST = bytes.fromhex("02 00 55 03 43 01 00 03 A1 0D")
+UHF_READ_FREQ_CH_REQUEST = bytes.fromhex("02 00 55 03 43 02 00 03 A2 0D")
+UHF_GET_INVENTORY_PARAM_REQUEST = bytes.fromhex("02 00 55 02 41 00 03 9D 0D")
+UHF_SET_INVENTORY_PARAM_REQUEST = bytes.fromhex(
+    "02 00 55 09 30 00 81 00 00 00 00 00 00 03 14 0D"
+)
+
+# 送信出力読み取りの固定応答です。
+# サンプル側は result[7] / result[8] を見て dBm 表示するため、
+# 0x00F0 = 240 -> 24.0 dBm 相当の値を返します。
+UHF_READ_OUTPUT_POWER_RESPONSE = build_frame_placeholder = None
+
 INVENTORY_TAG_RESPONSE = bytes.fromhex(
     "02 00 6C 13 09 FF 12 30 0E 30 00 E2 80 11 00 20 00 39 46 A5 F0 0F 5A 03 1C 0D"
 )
 INVENTORY_DONE_ONE_TAG = bytes.fromhex("02 00 30 05 10 00 01 00 1A 03 65 0D")
 INVENTORY_DONE_NO_TAG = bytes.fromhex("02 00 30 05 10 00 00 00 1A 03 64 0D")
-COMMAND_MODE_ACK = bytes.fromhex("02 00 30 00 03 35 0D")
 
 
 @dataclass(frozen=True)
@@ -67,6 +80,17 @@ def build_frame(command: int, data: bytes = b"", address: int = 0x00) -> bytes:
 def build_nack(detail: int, error_code_1: int, address: int = 0x00) -> bytes:
     data = bytes([detail, error_code_1, 0x00, 0x00, 0x00]) + (b"\x00" * 5)
     return build_frame(NACK, data, address=address)
+
+
+# build_frame() 定義後に固定応答を生成します。
+# ここで返す値は mock 用の安全な固定値であり、実機設定の正値ではありません。
+UHF_READ_OUTPUT_POWER_RESPONSE = build_frame(ACK, bytes([0x43, 0x01, 0x00, 0xF0, 0x00]))
+UHF_READ_FREQ_CH_RESPONSE = build_frame(ACK, bytes([0x43, 0x02, 0x00, 0x15]))
+UHF_GET_INVENTORY_PARAM_RESPONSE = build_frame(
+    ACK,
+    bytes([0x41, 0x00, 0x30, 0x00, 0x81, 0x00, 0x00, 0x00, 0x00]),
+)
+BUZZER_ACK = build_frame(ACK)
 
 
 def extract_detail_for_nack(frame: bytes) -> int:
@@ -107,6 +131,10 @@ def is_ram_command_mode_set(frame: ParsedFrame) -> bool:
     )
 
 
+def is_buzzer_command(frame: ParsedFrame) -> bool:
+    return frame.command == BUZZER and len(frame.data) == 2
+
+
 def responses_for_request(frame: bytes, scenario: str) -> List[bytes]:
     if scenario not in SCENARIOS:
         raise ValueError(f"unknown scenario: {scenario}")
@@ -129,10 +157,27 @@ def responses_for_request(frame: bytes, scenario: str) -> List[bytes]:
     if is_ram_command_mode_set(parsed):
         return [COMMAND_MODE_ACK]
 
+    if frame == UHF_READ_OUTPUT_POWER_REQUEST:
+        return [UHF_READ_OUTPUT_POWER_RESPONSE]
+
+    if frame == UHF_READ_FREQ_CH_REQUEST:
+        return [UHF_READ_FREQ_CH_RESPONSE]
+
+    if frame == UHF_GET_INVENTORY_PARAM_REQUEST:
+        return [UHF_GET_INVENTORY_PARAM_RESPONSE]
+
+    if frame == UHF_SET_INVENTORY_PARAM_REQUEST:
+        # SET系コマンドは、通常サンプルから送られないことを確認する対象です。
+        # 誤って送られた場合はACKせず、FORMAT_ERROR相当のNACKを返します。
+        return [build_nack(extract_detail_for_nack(frame), ERROR_FORMAT, parsed.address)]
+
     if frame == UHF_INVENTORY_REQUEST:
         if scenario == "no-tag":
             return [INVENTORY_DONE_NO_TAG]
         return [INVENTORY_TAG_RESPONSE, INVENTORY_DONE_ONE_TAG]
+
+    if is_buzzer_command(parsed):
+        return [BUZZER_ACK]
 
     # TODO: Unsupported commands are intentionally not inferred here. If a
     # NACK-path check is needed for unsupported commands, use force-nack.

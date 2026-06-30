@@ -17,6 +17,8 @@ Python 3.10+ / Windows 10+ で動作確認想定
 - すべての条件分岐を網羅しているわけではありません。
 - 実機の設定（IP/ポート）や詳細なプロトコルは、製品のプロトコル仕様書をご確認ください。
 - タイムアウトや再送、パケット分割等は環境に合わせて調整してください。
+- 安全のため、UHF_SET_INVENTORY_PARAM は通常実行フローでは自動送信しません。
+  Inventoryパラメータは UHF_GET_INVENTORY_PARAM で読み取り・表示のみ行います。
 
 【前提】
 - LAN モデル（TCP サーバーモード）に対して、上位機器（本プログラム）が TCP クライアントとして接続。
@@ -57,6 +59,8 @@ COMMANDS = {
     'COMMAND_MODE_SET'       : bytes([0x02, 0x00, 0x4E, 0x07, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x03, 0x6A, 0x0D]),
     'UHF_INVENTORY'          : bytes([0x02, 0x00, 0x55, 0x01, 0x10, 0x03, 0x6B, 0x0D]),
     'UHF_GET_INVENTORY_PARAM': bytes([0x02, 0x00, 0x55, 0x02, 0x41, 0x00, 0x03, 0x9D, 0x0D]),
+    # 安全上の理由により、通常実行フローではこのSET系コマンドを自動送信しません。
+    # 明示許可、仕様確認、実機ログ比較、復元手順がそろうまでは読み取り専用で扱います。
     'UHF_SET_INVENTORY_PARAM': bytes([0x02, 0x00, 0x55, 0x09, 0x30, 0x00, 0x81, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x14, 0x0D]),
     'UHF_READ_OUTPUT_POWER'  : bytes([0x02, 0x00, 0x55, 0x03, 0x43, 0x01, 0x00, 0x03, 0xA1, 0x0D]),
     'UHF_READ_FREQ_CH'       : bytes([0x02, 0x00, 0x55, 0x03, 0x43, 0x02, 0x00, 0x03, 0xA2, 0x0D]),
@@ -374,25 +378,16 @@ def main():
         session.close()
         sys.exit(1)
 
-    # --- インベントリパラメータ取得/設定（任意） ---
+    # --- インベントリパラメータ取得（読み取りのみ） ---
     result = communicate(session, COMMANDS['UHF_GET_INVENTORY_PARAM'])
     if re.match(STX + b'.' + ACK, result):
         print("UHF_GET_INVENTORY_PARAM が正常に実行されました")
+        print("Inventoryパラメータ受信HEX:", result.hex(' ').upper())
+        print("安全方針: UHF_SET_INVENTORY_PARAM は自動送信しません。")
     elif re.match(STX + b'.' + NACK, result):
         print(parse_nack_response(result))
     else:
         print("UHF_GET_INVENTORY_PARAM 実行エラー")
-        print(result.hex())
-        session.close()
-        sys.exit(1)
-
-    result = communicate(session, COMMANDS['UHF_SET_INVENTORY_PARAM'])
-    if re.match(STX + b'.' + ACK, result):
-        print("UHF_SET_INVENTORY_PARAM が正常に実行されました")
-    elif re.match(STX + b'.' + NACK, result):
-        print(parse_nack_response(result))
-    else:
-        print("UHF_SET_INVENTORY_PARAM 実行エラー")
         print(result.hex())
         session.close()
         sys.exit(1)

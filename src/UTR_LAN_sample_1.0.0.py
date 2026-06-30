@@ -13,6 +13,7 @@ Python 3.10+ / Windows 10+ で動作確認想定
 - 例として「ROMバージョン確認 → コマンドモード → 出力/周波数取得 →
   インベントリ（指定回数）→ ブザー制御 → 集計保存」の流れを実装。
 - 実機確認やトラブル切り分けのため、送信HEXと受信HEXを logs/lan_sample/ に保存します。
+- --host / --port / --repeat を指定すると、対話入力なしで実行できます。
 
 【注意事項】
 - すべての条件分岐を網羅しているわけではありません。
@@ -26,6 +27,7 @@ Python 3.10+ / Windows 10+ で動作確認想定
 - 既定のポート例: 9004（装置・設定により異なる場合があります）
 """
 
+import argparse
 import sys
 import time
 import datetime
@@ -33,6 +35,14 @@ import re
 import socket
 from pathlib import Path
 from typing import List, Optional, Tuple
+
+# ==== 実行時設定 =================================================================
+# 当面の実機確認では社内検証機のIPを既定値にします。
+# 配布版・顧客向けに戻す場合は DEFAULT_HOST を "192.168.0.1" に変更してください。
+DEFAULT_HOST = "10.26.201.92"
+DEFAULT_PORT = 9004
+MIN_REPEAT_COUNT = 1
+MAX_REPEAT_COUNT = 100
 
 # ==== 定数定義（USB版と同じ）====================================================
 HEADER_LENGTH     = 4        # STX, アドレス, コマンド, データ長 (各1バイト)
@@ -68,6 +78,74 @@ COMMANDS = {
     'UHF_READ_FREQ_CH'       : bytes([0x02, 0x00, 0x55, 0x03, 0x43, 0x02, 0x00, 0x03, 0xA2, 0x0D]),
     'UHF_WRITE'              : bytes([0x02, 0x00, 0x55, 0x08, 0x16, 0x01, 0x00, 0x00, 0x00, 0x02, 0x04, 0x56, 0x03, 0xD5, 0x0D]),
 }
+
+# =============================================================================
+#  CLI引数
+# =============================================================================
+def parse_cli_args() -> argparse.Namespace:
+    """コマンドライン引数を解析して返す。未指定時は従来どおり対話入力も使えます。"""
+    parser = argparse.ArgumentParser(
+        description="UTR LAN sample. Example: py src/UTR_LAN_sample_1.0.0.py --host 10.26.201.92 --port 9004 --repeat 1"
+    )
+    parser.add_argument(
+        "--host",
+        default=None,
+        help=f"接続先IPアドレス。未指定でEnterした場合は {DEFAULT_HOST} を使用します。",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help=f"TCPポート番号。未指定でEnterした場合は {DEFAULT_PORT} を使用します。",
+    )
+    parser.add_argument(
+        "--repeat",
+        type=int,
+        default=None,
+        help=f"Inventory繰り返し回数（{MIN_REPEAT_COUNT}〜{MAX_REPEAT_COUNT}）。未指定時は画面入力します。",
+    )
+    return parser.parse_args()
+
+def validate_repeat_count(value: int) -> int:
+    """Inventory繰り返し回数が安全な範囲内か確認する。"""
+    if (value < MIN_REPEAT_COUNT) or (value > MAX_REPEAT_COUNT):
+        raise ValueError(f"入力は {MIN_REPEAT_COUNT} 〜 {MAX_REPEAT_COUNT} の整数である必要があります。")
+    return value
+
+def resolve_connection_settings(args: argparse.Namespace) -> Tuple[str, int]:
+    """CLI引数または対話入力から、接続先IPとポート番号を決定する。"""
+    if args.host:
+        host = args.host.strip()
+        print(f"接続先IP: {host}（--host 指定）")
+    else:
+        host_text = input(f"装置の IP アドレスを入力してください（未入力なら {DEFAULT_HOST}）: ").strip()
+        host = host_text if host_text else DEFAULT_HOST
+
+    if args.port is not None:
+        port = args.port
+        print(f"TCPポート番号: {port}（--port 指定）")
+    else:
+        port_text = input(f"TCP ポート番号を入力してください（未入力なら {DEFAULT_PORT} を使用）: ").strip()
+        port = int(port_text) if port_text else DEFAULT_PORT
+
+    if not (1 <= port <= 65535):
+        raise ValueError("TCPポート番号は 1 〜 65535 の範囲で指定してください。")
+
+    return host, port
+
+def resolve_repeat_count(args: argparse.Namespace) -> int:
+    """CLI引数または対話入力から、Inventory繰り返し回数を決定する。"""
+    if args.repeat is not None:
+        repeat_count = validate_repeat_count(args.repeat)
+        print(f"繰り返す回数: {repeat_count}（--repeat 指定）")
+        return repeat_count
+
+    while True:
+        try:
+            repeat_count = int(input(f"繰り返す回数を入力してください（{MIN_REPEAT_COUNT}〜{MAX_REPEAT_COUNT}）: "))
+            return validate_repeat_count(repeat_count)
+        except ValueError as e:
+            print(f"エラー: {e}")
 
 # =============================================================================
 #  ユーティリティ（SUM 計算/検証、NACK解析、RSSI値計算 等）
@@ -353,11 +431,15 @@ def save_results_to_file(filename: str, total_iterations: int, total_read_time: 
 #  メイン
 # =============================================================================
 def main():
-    # --- 接続情報の入力 ---
+    args = parse_cli_args()
+
+    # --- 接続情報の決定 ---
     print("UTR（LANモデル）に接続します。")
-    host = input("装置の IP アドレスを入力してください（例: 192.168.0.1）: ").strip()
-    port_text = input("TCP ポート番号を入力してください（未入力なら 9004 を使用）: ").strip()
-    port = int(port_text) if port_text else 9004
+    try:
+        host, port = resolve_connection_settings(args)
+    except ValueError as e:
+        print(f"入力エラー: {e}")
+        sys.exit(1)
 
     # --- ログ準備 ---
     # 実機確認時に「何を送って、何を受けたか」を後から確認できるように保存します。
@@ -450,14 +532,12 @@ def main():
     total_iterations  = 0
     pc_uii_count_dict = {}
 
-    while True:
-        try:
-            repeat_count = int(input("繰り返す回数を入力してください（1〜100）: "))
-            if (repeat_count <= 0) or (repeat_count > 100):
-                raise ValueError("入力は 1 〜 100 の整数である必要があります。")
-            break
-        except ValueError as e:
-            print(f"エラー: {e}")
+    try:
+        repeat_count = resolve_repeat_count(args)
+    except ValueError as e:
+        print(f"入力エラー: {e}")
+        session.close()
+        sys.exit(1)
 
     for _ in range(repeat_count):
         start_time = time.time()

@@ -88,13 +88,16 @@ def test_force_nack_returns_mock_specific_format_error_for_supported_command(moc
 
 
 def test_unsupported_command_has_no_response_in_normal_scenario(mock_server):
-    unsupported = mock_server.build_frame(0x42, bytes([0x01, 0x00]))
+    # 0x7F は、このmockサーバーで対応していない任意のコマンド番号です。
+    # 0x42 はブザーコマンドとして対応対象にしたため、unsupported用途には使いません。
+    unsupported = mock_server.build_frame(0x7F, bytes([0x01, 0x00]))
 
     assert mock_server.responses_for_request(unsupported, "one-tag") == []
 
 
 def test_force_nack_returns_mock_specific_nack_for_unsupported_command(mock_server):
-    unsupported = mock_server.build_frame(0x42, bytes([0x01, 0x00]))
+    # 0x7F は、このmockサーバーで対応していない任意のコマンド番号です。
+    unsupported = mock_server.build_frame(0x7F, bytes([0x01, 0x00]))
 
     responses = mock_server.responses_for_request(unsupported, "force-nack")
 

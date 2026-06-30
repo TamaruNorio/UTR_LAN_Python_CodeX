@@ -31,7 +31,8 @@ def test_main_reads_inventory_param_but_does_not_set_it_automatically():
     main_source = inspect.getsource(module.main)
 
     assert "COMMANDS['UHF_GET_INVENTORY_PARAM']" in main_source
-    assert "COMMANDS['UHF_SET_INVENTORY_PARAM']" not in main_source
+    assert "communicate(session, COMMANDS['UHF_SET_INVENTORY_PARAM']" not in main_source
+    assert 'communicate(session, COMMANDS["UHF_SET_INVENTORY_PARAM"' not in main_source
 
 
 def test_set_inventory_param_command_definition_is_not_removed():

@@ -12,6 +12,7 @@ Python 3.10+ / Windows 10+ で動作確認想定
 - 受信処理（STX/ETX/SUM/CR の逐次検証）とインベントリ解析は、USB 版の設計を踏襲。
 - 例として「ROMバージョン確認 → コマンドモード → 出力/周波数取得 →
   インベントリ（指定回数）→ ブザー制御 → 集計保存」の流れを実装。
+- 実機確認やトラブル切り分けのため、送信HEXと受信HEXを logs/lan_sample/ に保存します。
 
 【注意事項】
 - すべての条件分岐を網羅しているわけではありません。
@@ -30,6 +31,7 @@ import time
 import datetime
 import re
 import socket
+from pathlib import Path
 from typing import List, Optional, Tuple
 
 # ==== 定数定義（USB版と同じ）====================================================
@@ -113,6 +115,36 @@ def convert_rssi(rssi_hex_value: str) -> float:
     added_binary_value = bin(int(inverted_binary_value, 2) + 1)[2:]
     rssi_value = int(added_binary_value, 2)
     return -rssi_value / 10
+
+def format_hex(data: bytes) -> str:
+    """ログや画面表示で見やすいように、bytesをスペース区切りの大文字HEXへ変換する。"""
+    if not data:
+        return "(no data)"
+    return data.hex(' ').upper()
+
+class TxRxLogger:
+    """LANサンプルの送受信内容をファイルへ残すための簡易ロガー。"""
+
+    def __init__(self, log_dir: str = "logs/lan_sample") -> None:
+        self.log_dir = Path(log_dir)
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.path = self.log_dir / f"lan_sample_tx_rx_{timestamp}.txt"
+        self.write("INFO", "START", "LAN sample TX/RX log started")
+
+    def write(self, direction: str, label: str, message: str) -> None:
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        with self.path.open('a', encoding="utf-8") as f:
+            f.write(f"{timestamp} {direction:<7} {label} {message}\n")
+
+    def info(self, label: str, message: str) -> None:
+        self.write("INFO", label, message)
+
+    def tx(self, label: str, data: bytes) -> None:
+        self.write("TX", label, format_hex(data))
+
+    def rx(self, label: str, data: bytes) -> None:
+        self.write("RX", label, format_hex(data))
 
 # =============================================================================
 #  受信フレーム解析（USB版のロジック踏襲）
@@ -213,10 +245,12 @@ class TcpSession:
             raise RuntimeError("ソケットが未接続です。connect() を先に呼び出してください。")
         return self.sock.recv(nbytes)
 
-def communicate(session: Optional[TcpSession], command: bytes, timeout: float = 1.0) -> bytes:
+def communicate(session: Optional[TcpSession], command: bytes, timeout: float = 1.0,
+                logger: Optional[TxRxLogger] = None, command_name: str = "COMMAND") -> bytes:
     """
     【LAN版】コマンド送信→受信しながら STX/ETX/SUM/CR を検証し、正常フレームのみ連結して返す。
     ACK/NACK のどちらかを受信したら戻る。timeout 超過でも戻る。
+    logger を渡した場合は、TX/RX のHEXを logs/lan_sample/ に保存する。
     """
     complete_response  = b''
     receive_buffer: List[int] = []
@@ -224,12 +258,18 @@ def communicate(session: Optional[TcpSession], command: bytes, timeout: float = 
     data_length   = 0
 
     if session is not None:
+        if logger is not None:
+            logger.tx(command_name, command)
         session.send(command)
 
     start_time = time.time()
     while True:
         if (time.time() - start_time) > timeout:
             print("タイムアウト: レスポンスが一定時間内に受信されませんでした。")
+            if logger is not None:
+                logger.info(command_name, f"TIMEOUT after {timeout:.1f}s")
+                if complete_response:
+                    logger.rx(command_name, complete_response)
             return complete_response
 
         if session is not None:
@@ -255,6 +295,8 @@ def communicate(session: Optional[TcpSession], command: bytes, timeout: float = 
                                     complete_response += frame
                                     if receive_buffer[CMD_LOCATION] in [ACK[0], NACK[0]]:
                                         receive_buffer = []
+                                        if logger is not None:
+                                            logger.rx(command_name, complete_response)
                                         return complete_response
                                     receive_buffer = receive_buffer[total_len:]
                                 else:
@@ -274,7 +316,8 @@ def communicate(session: Optional[TcpSession], command: bytes, timeout: float = 
 # =============================================================================
 #  ブザー制御（LAN版）
 # =============================================================================
-def send_buzzer_command(session: TcpSession, response_type: int, sound_type: int) -> bytes:
+def send_buzzer_command(session: TcpSession, response_type: int, sound_type: int,
+                        logger: Optional[TxRxLogger] = None) -> bytes:
     """
     ブザー制御コマンド（応答要求:0x01 を想定）。
     response_type: 0x00=応答なし / 0x01=応答あり（本サンプルは 0x01 推奨）
@@ -285,7 +328,8 @@ def send_buzzer_command(session: TcpSession, response_type: int, sound_type: int
     frame_wo_sum = header + data + ETX
     sum_value = calculate_sum_value(frame_wo_sum)
     full_command = frame_wo_sum + bytes([sum_value]) + CR
-    return communicate(session, full_command)
+    command_name = f"BUZZER_RESPONSE_{response_type:02X}_SOUND_{sound_type:02X}"
+    return communicate(session, full_command, logger=logger, command_name=command_name)
 
 # =============================================================================
 #  集計ログ保存
@@ -315,17 +359,25 @@ def main():
     port_text = input("TCP ポート番号を入力してください（未入力なら 9004 を使用）: ").strip()
     port = int(port_text) if port_text else 9004
 
+    # --- ログ準備 ---
+    # 実機確認時に「何を送って、何を受けたか」を後から確認できるように保存します。
+    tx_rx_logger = TxRxLogger()
+    tx_rx_logger.info("CONNECT_TARGET", f"{host}:{port}")
+    print(f"送受信ログ保存先: {tx_rx_logger.path}")
+
     # --- セッション確立 ---
     session = TcpSession(host, port, timeout=1.0)
     try:
         session.connect()
         print(f"接続成功: {host}:{port}")
+        tx_rx_logger.info("CONNECT", "OK")
     except Exception as e:
+        tx_rx_logger.info("CONNECT", f"NG {e}")
         print(f"接続エラー: {e}")
         sys.exit(1)
 
     # --- ROMバージョンで通信確認 ---
-    result = communicate(session, COMMANDS['ROM_VERSION_CHECK'])
+    result = communicate(session, COMMANDS['ROM_VERSION_CHECK'], logger=tx_rx_logger, command_name='ROM_VERSION_CHECK')
     if re.match(STX + b'.' + ACK, result):
         if bytes([result[DETAIL_LOCATION]]) == DETAIL_ROM:
             print("LAN通信: OK（ROMバージョン ACK 受信）")
@@ -338,7 +390,7 @@ def main():
         sys.exit(1)
 
     # --- コマンドモード切替 ---
-    result = communicate(session, COMMANDS['COMMAND_MODE_SET'])
+    result = communicate(session, COMMANDS['COMMAND_MODE_SET'], logger=tx_rx_logger, command_name='COMMAND_MODE_SET')
     if re.match(STX + b'.' + ACK, result):
         print("コマンドモードに切り替えました")
     elif re.match(STX + b'.' + NACK, result):
@@ -350,7 +402,7 @@ def main():
 
     # --- 出力/周波数の読み取り ---
     # 出力
-    result = communicate(session, COMMANDS['UHF_READ_OUTPUT_POWER'])
+    result = communicate(session, COMMANDS['UHF_READ_OUTPUT_POWER'], logger=tx_rx_logger, command_name='UHF_READ_OUTPUT_POWER')
     if re.match(STX + b'.' + ACK, result):
         level_hex = hex(result[8] + result[7])
         output_power_level = int(level_hex, 16) / 10
@@ -364,7 +416,7 @@ def main():
         sys.exit(1)
 
     # 周波数チャンネル
-    result = communicate(session, COMMANDS['UHF_READ_FREQ_CH'])
+    result = communicate(session, COMMANDS['UHF_READ_FREQ_CH'], logger=tx_rx_logger, command_name='UHF_READ_FREQ_CH')
     if re.match(STX + b'.' + ACK, result):
         output_ch = int(hex(result[7]), 16)
         print("チャンネル番号：", output_ch, "ch")
@@ -379,7 +431,7 @@ def main():
         sys.exit(1)
 
     # --- インベントリパラメータ取得（読み取りのみ） ---
-    result = communicate(session, COMMANDS['UHF_GET_INVENTORY_PARAM'])
+    result = communicate(session, COMMANDS['UHF_GET_INVENTORY_PARAM'], logger=tx_rx_logger, command_name='UHF_GET_INVENTORY_PARAM')
     if re.match(STX + b'.' + ACK, result):
         print("UHF_GET_INVENTORY_PARAM が正常に実行されました")
         print("Inventoryパラメータ受信HEX:", result.hex(' ').upper())
@@ -409,7 +461,7 @@ def main():
 
     for _ in range(repeat_count):
         start_time = time.time()
-        received_data_bytes = communicate(session, COMMANDS['UHF_INVENTORY'], timeout=3.0)
+        received_data_bytes = communicate(session, COMMANDS['UHF_INVENTORY'], timeout=3.0, logger=tx_rx_logger, command_name='UHF_INVENTORY')
         pc_uii_data_list, rssi_list, expected_read_count = received_data_parse(received_data_bytes)
         read_time = time.time() - start_time
 
@@ -423,12 +475,12 @@ def main():
             pc_uii_count_dict[pc_uii_hex] = pc_uii_count_dict.get(pc_uii_hex, 0) + 1
 
         if pc_uii_data_list:
-            result = send_buzzer_command(session, 0x01, 0x00)  # 応答あり / ピー
+            result = send_buzzer_command(session, 0x01, 0x00, logger=tx_rx_logger)  # 応答あり / ピー
             if re.match(STX + b'.' + NACK, result):
                 print("ブザーパラメータが間違っています")
             print("タグを " + str(expected_read_count) + " 枚読み取りました。")
         else:
-            result = send_buzzer_command(session, 0x01, 0x01)  # 応答あり / ピッピッピ
+            result = send_buzzer_command(session, 0x01, 0x01, logger=tx_rx_logger)  # 応答あり / ピッピッピ
             if re.match(STX + b'.' + NACK, result):
                 print("ブザーパラメータが間違っています")
             print("タグが見つかりませんでした")
@@ -449,8 +501,11 @@ def main():
     # --- 集計保存 ---
     filename = "Inventory_result_LAN.log"
     save_results_to_file(filename, total_iterations, total_read_time, total_read_count, pc_uii_count_dict)
+    tx_rx_logger.info("RESULT_LOG", f"Saved {filename}")
+    print(f"送受信ログ保存先: {tx_rx_logger.path}")
 
     session.close()
+    tx_rx_logger.info("CLOSE", "TCP session closed")
 
 if __name__ == "__main__":
     main()

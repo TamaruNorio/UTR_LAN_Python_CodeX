@@ -10,6 +10,14 @@
 
 このサンプルプログラムは、ROMバージョン確認、コマンドモード切替、送信出力値／周波数チャンネルの取得、インベントリ（タグ読み取り）の実行、RSSIとPC+UIIの抽出・表示、ブザー制御、集計結果の表示／ログ保存、受信フレームのSTX / ETX / SUM / CR 検証といった主要な機能を提供します。
 
+## 安全方針
+
+通常実行フローでは、`UHF_SET_INVENTORY_PARAM` を自動送信しません。
+
+Inventoryパラメータは、`UHF_GET_INVENTORY_PARAM` で現在値を読み取り、受信HEXを表示するだけにします。SET系コマンド、FLASH書き込み、送信出力変更、周波数変更は、明示的な作業範囲と実機確認手順がない限り追加しません。
+
+詳細は `docs/disable_auto_set_inventory_param.md` を参照してください。
+
 ## 動作環境
 
 -   OS: Windows 10 / 11
@@ -163,6 +171,7 @@ py tools/real_device_check.py --host <実機IP> --port 9004
 - FLASH設定復元
 - RF出力設定変更
 - 周波数設定変更
+- `UHF_SET_INVENTORY_PARAM` の自動送信
 - ブザー制御
 - LED&ブザー制御
 - 連続Inventory
@@ -199,6 +208,10 @@ py tools/real_device_check.py --host <実機IP> --port 9004
 UTR_LAN_PYTHON/
 ├─ src/
 │  └─ UTR_LAN_sample_1.0.0.py   # 本サンプル（LAN版）
+├─ docs/
+│  └─ disable_auto_set_inventory_param.md
+├─ tests/
+│  └─ test_disable_auto_set_inventory_param.py
 ├─ .gitignore
 └─ README.md                     # このファイル
 ```
@@ -211,9 +224,10 @@ UTR_LAN_PYTHON/
 2.  ROMバージョン確認（ACK/NACK判定）
 3.  コマンドモード切替
 4.  送信出力値・周波数チャンネルの取得
-5.  インベントリ（指定回数）
-6.  ブザー制御（応答あり）
-7.  集計表示／ログ保存 → 切断
+5.  Inventoryパラメータ読み取り（`UHF_GET_INVENTORY_PARAM`）
+6.  インベントリ（指定回数）
+7.  ブザー制御（応答あり）
+8.  集計表示／ログ保存 → 切断
 
 > 受信処理は **1バイトずつ読み取り**、ヘッダ/フッタおよび **SUM を検証**してフレーム確定します。ACK/NACK を受信した時点で `communicate()` は戻ります。
 
@@ -234,5 +248,6 @@ UTR_LAN_PYTHON/
 
 ## 変更履歴
 
+-   0.2.1 (2026-06-30): 通常実行フローから `UHF_SET_INVENTORY_PARAM` の自動送信を停止。Inventoryパラメータは `UHF_GET_INVENTORY_PARAM` による読み取り・表示のみに変更。
 -   0.2.0 (2026-05-19): 通信プロトコル資料、機器取扱説明書、UTRRWManager確認手順、mock TCPサーバー、mockクライアント、実機LAN確認ツール、pytestによる検証基盤を追加。UTRRWManagerの送受信ログを基準ログとして、PythonサンプルのTX/RXと比較できる構成に整理。
 -   0.1.0 (2024-06-06): 初版。LAN受信のフレーム復元とInventory2最小動作を実装。

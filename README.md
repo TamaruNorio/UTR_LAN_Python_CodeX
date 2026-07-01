@@ -41,6 +41,75 @@ Inventoryパラメータは、`UHF_GET_INVENTORY_PARAM` で現在値を読み取
     ```
     実行時プロンプトに従い、**IP アドレス** と **TCP ポート** を入力します。ポート未入力時は **9004** を使用します。指定回数のインベントリを実行し、結果とログを出力します。
 
+### LANサンプル本体のCLI実行
+
+`src/UTR_LAN_sample_1.0.0.py` は、CLI引数で接続先とInventory回数を指定できます。
+
+```powershell
+py src/UTR_LAN_sample_1.0.0.py --host 10.26.201.92 --port 9004 --repeat 1
+```
+
+CLI引数:
+
+- `--host`: 接続先IPアドレス。未指定かつ対話入力も未入力の場合は `10.26.201.92` を使用します。
+- `--port`: TCPポート番号。未指定かつ対話入力も未入力の場合は `9004` を使用します。
+- `--repeat`: Inventoryの繰り返し回数。`1` から `100` の範囲で指定します。
+
+CLI引数を省略した場合は、従来どおり対話入力で動作します。
+
+### LAN Inventory batch runner
+
+Inventory結果をCSVへ保存し、RSSI集計、タグ別集計、SUMMARY行を出力する場合は `tools/lan_inventory_batch.py` を使用します。
+
+```powershell
+py tools/lan_inventory_batch.py --host 10.26.201.92 --port 9004 --repeat 10 --interval 0.1
+```
+
+CLI引数:
+
+- `--host`: 接続先IPアドレス。既定値は `10.26.201.92` です。
+- `--port`: TCPポート番号。既定値は `9004` です。
+- `--repeat`: Inventoryの実行回数。`1` 以上を指定します。
+- `--interval`: Inventory間隔（秒）。`0` 以上を指定します。
+- `--no-buzzer`: 指定時はタグ有無に応じたブザーコマンドを送信しません。
+- `--csv`: CSV保存先。未指定時は `logs/lan_sample/inventory_batch_YYYYMMDD_HHMMSS.csv` に保存します。
+
+CSV通常行の主な項目:
+
+- `timestamp`
+- `iteration`
+- `read_time_sec`
+- `expected_read_count`
+- `actual_tag_count`
+- `rssi`
+- `pc_uii`
+- `output_power_dbm`
+- `channel`
+- `frequency_mhz`
+- `note`
+
+CSV末尾には、Excelでも確認しやすい `SUMMARY` 行を追加します。
+
+- `total_iterations`
+- `total_read_time_sec`
+- `total_tag_responses`
+- `unique_tags`
+- `average_tag_count`
+- `min_rssi`
+- `max_rssi`
+- `average_rssi`
+
+送受信ログは、`logs/lan_sample/lan_sample_tx_rx_YYYYMMDD_HHMMSS.txt` に保存します。
+
+LANサンプル本体およびLAN Inventory batch runnerでは、以下の安全方針を維持します。
+
+- `UHF_SET_INVENTORY_PARAM` は自動送信しません。
+- FLASH書き込みは行いません。
+- 送信出力変更は行いません。
+- 周波数変更は行いません。
+- 8CHアンテナ切替は行いません。
+- 実機への永続設定変更は行いません。
+
 ## 開発環境セットアップ
 
 開発・テスト用の依存関係をインストールします。
@@ -242,6 +311,7 @@ UTR_LAN_PYTHON/
 ├─ tools/
 │  ├─ mock_utr_tcp_server.py
 │  ├─ mock_client_check.py
+│  ├─ lan_inventory_batch.py
 │  └─ real_device_check.py
 ├─ .gitignore
 └─ README.md                     # このファイル

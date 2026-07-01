@@ -78,14 +78,13 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--no-buzzer", action="store_true", help="Do not send buzzer commands")
     parser.add_argument("--csv", type=Path, default=None, help="CSV output path")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
 
-
-def ensure_positive_args(args: argparse.Namespace) -> None:
-    if args.repeat <= 0:
-        raise ValueError("--repeat must be greater than 0")
+    if args.repeat < 1:
+        parser.error("--repeat must be 1 or greater")
     if args.interval < 0:
-        raise ValueError("--interval must be 0 or greater")
+        parser.error("--interval must be 0 or greater")
+    return args
 
 
 def is_ack(module: ModuleType, response: bytes) -> bool:
@@ -138,6 +137,72 @@ def fmt_optional(value: Any) -> str:
     if isinstance(value, float):
         return f"{value:.3f}"
     return str(value)
+
+
+def rssi_stats(rssi_values: list[float]) -> tuple[Optional[float], Optional[float], Optional[float]]:
+    if not rssi_values:
+        return None, None, None
+    return min(rssi_values), max(rssi_values), sum(rssi_values) / len(rssi_values)
+
+
+def write_summary_rows(
+    writer: csv.writer,
+    *,
+    total_iterations: int,
+    total_read_time: float,
+    total_tag_responses: int,
+    unique_tag_count: int,
+    rssi_values: list[float],
+) -> None:
+    min_rssi, max_rssi, average_rssi = rssi_stats(rssi_values)
+    summary_values = [
+        ("total_iterations", total_iterations),
+        ("total_read_time_sec", f"{total_read_time:.3f}"),
+        ("total_tag_responses", total_tag_responses),
+        ("unique_tags", unique_tag_count),
+        ("average_tag_count", f"{total_tag_responses / total_iterations:.3f}"),
+        ("min_rssi", fmt_optional(min_rssi)),
+        ("max_rssi", fmt_optional(max_rssi)),
+        ("average_rssi", fmt_optional(average_rssi)),
+    ]
+    for key, value in summary_values:
+        writer.writerow(["SUMMARY", key, value])
+
+
+def print_summary(
+    *,
+    total_iterations: int,
+    total_read_time: float,
+    total_tag_responses: int,
+    tag_counts: dict[str, int],
+    rssi_values: list[float],
+    csv_path: Path,
+    tx_rx_log_path: Path,
+) -> None:
+    print("\n=== 集計結果 ===")
+    print(f"Inventory回数: {total_iterations}")
+    print(f"総読み取り時間: {total_read_time:.3f} 秒")
+    print(f"総タグ応答数: {total_tag_responses}")
+    print(f"ユニークタグ数: {len(tag_counts)}")
+    print(f"平均タグ応答数: {total_tag_responses / total_iterations:.3f}")
+
+    min_rssi, max_rssi, average_rssi = rssi_stats(rssi_values)
+    if min_rssi is None:
+        print("RSSI集計: 読み取りなし")
+    else:
+        print(f"RSSI最小値: {min_rssi:.3f}")
+        print(f"RSSI最大値: {max_rssi:.3f}")
+        print(f"RSSI平均値: {average_rssi:.3f}")
+
+    print("タグ別読み取り回数:")
+    if tag_counts:
+        for pc_uii_hex, count in sorted(tag_counts.items()):
+            print(f"  {pc_uii_hex}: {count} 回")
+    else:
+        print("  読み取りなし")
+
+    print(f"CSV保存先: {csv_path}")
+    print(f"送受信ログ保存先: {tx_rx_log_path}")
 
 
 def write_inventory_rows(
@@ -204,7 +269,6 @@ def maybe_send_buzzer(module: ModuleType, session: Any, logger: Any, has_tag: bo
 
 
 def run(args: argparse.Namespace) -> int:
-    ensure_positive_args(args)
     module = load_lan_sample()
 
     csv_path = args.csv if args.csv is not None else default_csv_path()
@@ -217,7 +281,8 @@ def run(args: argparse.Namespace) -> int:
     session = module.TcpSession(args.host, args.port, timeout=1.0)
     total_read_time = 0.0
     total_tag_responses = 0
-    unique_tags: set[str] = set()
+    tag_counts: dict[str, int] = {}
+    rssi_values: list[float] = []
     output_power_dbm: Optional[float] = None
     channel: Optional[int] = None
     frequency_mhz: Optional[float] = None
@@ -302,7 +367,9 @@ def run(args: argparse.Namespace) -> int:
                     frequency_mhz=frequency_mhz,
                 )
                 for pc_uii in pc_uii_list:
-                    unique_tags.add(pc_uii.hex())
+                    pc_uii_hex = pc_uii.hex()
+                    tag_counts[pc_uii_hex] = tag_counts.get(pc_uii_hex, 0) + 1
+                rssi_values.extend(rssi_list[: len(pc_uii_list)])
 
                 maybe_send_buzzer(
                     module,
@@ -320,14 +387,24 @@ def run(args: argparse.Namespace) -> int:
                 if iteration < args.repeat and args.interval > 0:
                     time.sleep(args.interval)
 
-        print("\n=== 集計結果 ===")
-        print(f"Inventory回数: {args.repeat}")
-        print(f"総読み取り時間: {total_read_time:.3f} 秒")
-        print(f"総タグ応答数: {total_tag_responses}")
-        print(f"ユニークタグ数: {len(unique_tags)}")
-        print(f"平均タグ応答数: {total_tag_responses / args.repeat:.3f}")
-        print(f"CSV保存先: {csv_path}")
-        print(f"送受信ログ保存先: {tx_rx_logger.path}")
+            write_summary_rows(
+                csv.writer(csv_file),
+                total_iterations=args.repeat,
+                total_read_time=total_read_time,
+                total_tag_responses=total_tag_responses,
+                unique_tag_count=len(tag_counts),
+                rssi_values=rssi_values,
+            )
+
+        print_summary(
+            total_iterations=args.repeat,
+            total_read_time=total_read_time,
+            total_tag_responses=total_tag_responses,
+            tag_counts=tag_counts,
+            rssi_values=rssi_values,
+            csv_path=csv_path,
+            tx_rx_log_path=tx_rx_logger.path,
+        )
         tx_rx_logger.info("CSV", f"Saved {csv_path}")
         return 0
     except Exception as exc:
